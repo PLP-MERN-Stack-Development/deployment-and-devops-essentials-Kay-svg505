@@ -1,0 +1,399 @@
+# Week7 — Deployment & DevOps Deliverables for MERN App
+
+This document contains ready-to-drop files, CI/CD workflows, deployment snippets, monitoring setup notes, and a production-ready `README.md` you can paste into your GitHub Classroom repository. Use these templates as starting points — adjust environment variable names and commands to match your project's structure.
+
+---
+
+## 1) README.md (to include in repo root)
+
+````md
+# MERN App — Deployment & DevOps (Week 7)
+
+## Overview
+This repository contains a MERN (MongoDB, Express, React, Node) application prepared for production deployment. The project includes CI/CD workflows, deployment scripts, environment templates, and monitoring examples.
+
+## Live URLs
+- Frontend: https://<your-frontend-url>
+- Backend API: https://<your-backend-url>
+
+> Replace above placeholders with the actual deployed URLs.
+
+## How to install locally
+1. Clone repo
+```bash
+git clone <your-repo-url>
+cd <repo-folder>
+````
+
+2. Create `.env` files for server and client based on `.env.example`.
+3. Install dependencies
+
+```bash
+# server
+cd server && npm install
+# client
+cd ../client && npm install
+```
+
+4. Run locally (development)
+
+```bash
+# from repo root
+# start server (nodemon recommended)
+cd server && npm run dev
+# start client
+cd ../client && npm start
+```
+
+## Production build & run (local test)
+
+```bash
+# build client
+cd client && npm run build
+# serve built client or point your static host to client/build
+# start server in production mode
+cd ../server && NODE_ENV=production npm start
+```
+
+## CI/CD (what's included)
+
+* `/.github/workflows/frontend-ci.yml` — tests & build for React app
+* `/.github/workflows/backend-ci.yml` — tests for Express app
+* `/.github/workflows/frontend-cd.yml` — deploys frontend to Vercel/Netlify (example)
+* `/.github/workflows/backend-cd.yml` — deploys backend to Render/Railway (example)
+
+## Monitoring & Maintenance
+
+* Health-check endpoint: `GET /healthz`
+* Example integration: Sentry for error tracking
+* Uptime monitoring: recommended uptime robot / Pingdom
+* Backups: schedule MongoDB Atlas automated backups
+
+## How to capture CI screenshots (for submission)
+
+1. Push the workflows to a branch and open GitHub Actions tab.
+2. Click the workflow run and take screenshots of the successful runs (workflow list, job log, and deployment job).
+3. Save screenshots to `/screenshots/` and commit.
+
+## Troubleshooting
+
+* If deployment fails, inspect the job logs in GitHub Actions and the target host's logs (Render/Railway/Heroku dashboard).
+* Ensure environment variables (DB connection, JWT secret, API keys) are set at the hosting provider.
+
+## Contact
+
+For questions, open an issue in this repo or contact the maintainer.
+
+````
+
+---
+
+## 2) `.env.example`
+
+```env
+# server .env.example
+PORT=5000
+NODE_ENV=development
+MONGO_URI=your-mongodb-atlas-connection-string
+JWT_SECRET=your_jwt_secret
+LOG_LEVEL=info
+
+# client .env.example (prefix with REACT_APP_ if Create React App)
+REACT_APP_API_URL=https://localhost:5000/api
+REACT_APP_GOOGLE_ANALYTICS_ID=
+````
+
+---
+
+## 3) Express production-ready snippets
+
+### 3.1 `server/index.js` (snippet)
+
+```js
+// health check + helmet + common production middleware
+const express = require('express');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const morgan = require('morgan');
+const app = express();
+
+app.use(helmet());
+app.use(express.json());
+
+if (process.env.NODE_ENV === 'production') {
+  app.use(morgan('combined'));
+} else {
+  app.use(morgan('dev'));
+}
+
+// rate limiter
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+app.use(limiter);
+
+app.get('/healthz', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+
+// error handler
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+
+module.exports = app;
+```
+
+### 3.2 `server/Dockerfile` (optional)
+
+```dockerfile
+FROM node:18-alpine
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 5000
+CMD ["node", "dist/index.js"]
+```
+
+---
+
+## 4) GitHub Actions workflows
+
+> Put these files under `.github/workflows/` in your repo.
+
+### 4.1 `frontend-ci.yml`
+
+```yaml
+name: Frontend CI
+on: [push, pull_request]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: |
+          cd client
+          npm ci
+      - name: Run tests
+        run: |
+          cd client
+          npm test -- --watchAll=false
+      - name: Build
+        run: |
+          cd client
+          npm run build
+      - name: Upload artifact (build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-build
+          path: client/build
+```
+
+### 4.2 `backend-ci.yml`
+
+```yaml
+name: Backend CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services: {}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: |
+          cd server
+          npm ci
+      - name: Run tests
+        env:
+          NODE_ENV: test
+        run: |
+          cd server
+          npm test
+      - name: Lint
+        run: |
+          cd server
+          npm run lint || true
+```
+
+### 4.3 `frontend-cd.yml` (example for Netlify)
+
+```yaml
+name: Frontend CD
+on:
+  push:
+    branches: [ main, master ]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install & Build
+        run: |
+          cd client
+          npm ci
+          npm run build
+      - name: Deploy to Netlify
+        uses: netlify/actions/cli@master
+        with:
+          args: deploy --dir=client/build --prod
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+```
+
+> For Vercel, use the Vercel Git integration (recommended) or `amondnet/vercel-action@v20`.
+
+### 4.4 `backend-cd.yml` (example for Render via GitHub deploy)
+
+```yaml
+name: Backend CD
+on:
+  push:
+    branches: [ main, master ]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trigger Render Deploy (example)
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "https://api.render.com/deploy/srv-xxxxxxxxxxxxxxxx"
+```
+
+> Railway and Heroku have their own deploy options (Heroku GitHub integration or `akhileshns/heroku-deploy` action).
+
+---
+
+## 5) Monitoring configuration examples
+
+### 5.1 Sentry (server)
+
+```js
+// server/sentry.js
+const Sentry = require('@sentry/node');
+Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV });
+module.exports = Sentry;
+
+// then use Sentry.Handlers.errorHandler() in express error middleware
+```
+
+### 5.2 Health check and readiness
+
+* Add `/healthz` (returns 200 + status) and `/ready` (checks DB connection) endpoints.
+
+```js
+app.get('/ready', async (req,res)=>{
+  const dbState = mongoose.connection.readyState; // 1 = connected
+  res.json({ ready: dbState === 1, state: dbState });
+});
+```
+
+### 5.3 Uptime / alerts
+
+* Configure Pingdom/UptimeRobot to ping `https://<your-backend>/healthz` every 1-5 minutes.
+* Connect Sentry and an SMTP or Slack integration for error alerts.
+
+---
+
+## 6) Production Nginx (reverse proxy) — optional
+
+```nginx
+server {
+  listen 80;
+  server_name yourdomain.com www.yourdomain.com;
+
+  location /api/ {
+    proxy_pass http://localhost:5000/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_cache_bypass $http_upgrade;
+  }
+
+  location / {
+    root /var/www/your-frontend-build;
+    try_files $uri $uri/ /index.html;
+  }
+}
+```
+
+---
+
+## 7) Checklist for submission (copy into your project README or assignment submission)
+
+* [ ] App code (client + server) committed to GitHub Classroom repo
+* [ ] `.env.example` present
+* [ ] GitHub Actions workflows present in `.github/workflows/`
+* [ ] Frontend deployed (Vercel/Netlify/GH Pages) with URL added to README
+* [ ] Backend deployed (Render/Railway/Heroku) with URL added to README
+* [ ] CI screenshots saved to `/screenshots/` and committed
+* [ ] Health checks, Sentry (or equivalent), and monitoring configured
+* [ ] MongoDB Atlas set with backups enabled and connection string used in host env
+* [ ] Documentation: deployment steps + rollback procedure included in README
+
+---
+
+## 8) Rollback procedure (short)
+
+1. Revert the GitHub branch to the last known-good commit: `git revert <bad-commit>` or use the GitHub UI to revert the PR/merge.
+2. Push the revert commit to the protected branch (main/master).
+3. CI will trigger and redeploy the previous state automatically.
+4. If using host-specific rollbacks (Render/Railway/Heroku), trigger the host's rollback feature.
+
+---
+
+## 9) How to take CI screenshots (recommended images to include)
+
+* `screenshots/ci-frontend-build.png` — successful frontend build job log
+* `screenshots/ci-backend-tests.png` — passing backend tests
+* `screenshots/deploy-frontend.png` — final deploy step success
+* `screenshots/deploy-backend.png` — final backend deploy success
+
+Save them in `/screenshots/` and reference them in README with relative paths.
+
+---
+
+## 10) Extra: Example `package.json` scripts
+
+```json
+// server/package.json scripts
+{
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "nodemon src/index.js",
+    "build": "npm run build:ts",
+    "test": "jest --runInBand",
+    "lint": "eslint . --ext .js,.ts"
+  }
+}
+
+// client/package.json scripts
+{
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test --watchAll=false",
+    "eject": "react-scripts eject"
+  }
+}
+```
+
+---
+
+

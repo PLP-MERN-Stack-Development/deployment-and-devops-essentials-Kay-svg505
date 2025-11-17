@@ -1,0 +1,9 @@
+{
+"service": "UptimeRobot",
+"monitors": [
+{
+"url": "https://your-backend-url.com/healthz",
+"interval": 5
+}
+]
+}
